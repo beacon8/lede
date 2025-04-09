@@ -1,226 +1,190 @@
 #
-# This is free software, lisence use MIT.
-# 
-# Copyright (C) 2019 P3TERX <https://p3terx.com>
-# Copyright (C) 2020 KFERMercer <KFER.Mercer@gmail.com>
-# 
-# <https://github.com/KFERMercer/OpenWrt-CI>
+# Copyright (c) 2019-2020 P3TERX <https://p3terx.com>
+#
+# This is free software, licensed under the MIT License.
+# See /LICENSE for more information.
+#
+# https://github.com/P3TERX/Actions-OpenWrt
+# Description: Build OpenWrt using GitHub Actions
 #
 
-name: OpenWrt-CI
+name: Build OpenWrt
 
 on:
-  push:
-    branches: 
-      - master
-  # schedule:
-  #   - cron: 0 20 * * *
-  release:
-    types: [published]
+  repository_dispatch:
+  workflow_dispatch:
+    inputs:
+      ssh:
+        description: 'SSH connection to Actions'
+        required: false
+        default: 'false'
+
+env:
+  REPO_URL: https://github.com/coolsnowwolf/lede
+  REPO_BRANCH: master
+  FEEDS_CONF: feeds.conf.default
+  CONFIG_FILE: .config
+  DIY_P1_SH: diy-part1.sh
+  DIY_P2_SH: diy-part2.sh
+  UPLOAD_BIN_DIR: false
+  UPLOAD_FIRMWARE: true
+  UPLOAD_COWTRANSFER: false
+  UPLOAD_WETRANSFER: false
+  UPLOAD_RELEASE: false
+  TZ: Asia/Shanghai
 
 jobs:
-
-  build_openwrt:
-
-    name: Build OpenWrt firmware
-
-    runs-on: ubuntu-latest
-
-    if: github.event.repository.owner.id == github.event.sender.id
+  build:
+    runs-on: ubuntu-20.04
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          ref: master
+    - name: Checkout
+      uses: actions/checkout@main
 
-      - name: Space cleanup
-        env:
-          DEBIAN_FRONTEND: noninteractive
-        run: |
-          docker images -q | xargs -r docker rmi
-          sudo -E rm -rf /usr/share/dotnet /etc/mysql /etc/php /etc/apt/sources.list.d /usr/local/lib/android
-          sudo -E apt-mark hold grub-efi-amd64-signed
-          sudo -E apt update
-          sudo -E apt -y purge \
-            azure-cli \
-            docker.io \
-            ghc \
-            firefox \
-            google-chrome-stable \
-            dotnet-runtime \
-            powershell \
-            openjdk-* \
-            mysql-server \
-            php \
-            mongodb-org \
-            moby-engine \
-            snapd
-          sudo -E apt -y full-upgrade
-          sudo -E apt -y install ack antlr3 aria2 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp nano ninja-build p7zip p7zip-full patch pkgconf python3 python3-pip libpython3-dev qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
-          sudo -E systemctl daemon-reload
-          sudo -E apt -y autoremove --purge
-          sudo -E apt clean
-          sudo -E timedatectl set-timezone "Asia/Shanghai"
+    - name: Initialization environment
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc
+        sudo -E apt-get -qq update
+        sudo -E apt-get -qq install $(curl -fsSL git.io/depends-ubuntu-2004)
+        sudo -E apt-get -qq autoremove --purge
+        sudo -E apt-get -qq clean
+        sudo timedatectl set-timezone "$TZ"
+        sudo mkdir -p /workdir
+        sudo chown $USER:$GROUPS /workdir
 
-      - name: Get OpenClash
-        run: |
-          wget https://github.com/vernesong/OpenClash/archive/refs/heads/master.zip
-          unzip master.zip 
-          cp -r ./OpenClash-master/luci-app-openclash ./package
-          echo done
+    - name: Clone source code
+      working-directory: /workdir
+      run: |
+        df -hT $PWD
+        git clone $REPO_URL -b $REPO_BRANCH openwrt
+        ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
 
-      - name: Update feeds
-        run: |
-          ./scripts/feeds update -a
-          ./scripts/feeds install -a
+    - name: Load custom feeds
+      run: |
+        [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
+        chmod +x $DIY_P1_SH
+        cd openwrt
+        $GITHUB_WORKSPACE/$DIY_P1_SH
 
-      - name: Generate configuration file
-        run: |
-          rm -f ./.config*
-          touch ./.config
+    - name: Update feeds
+      run: cd openwrt && ./scripts/feeds update -a
 
-          #
-          # 在 cat >> .config <<EOF 到 EOF 之间粘贴你的编译配置，需注意缩进关系
-          # 例如:
+    - name: Install feeds
+      run: cd openwrt && ./scripts/feeds install -a
 
-          cat >> .config <<EOF
-          CONFIG_TARGET_mediatek=y
-          CONFIG_TARGET_mediatek_filogic=y
-          CONFIG_TARGET_mediatek_filogic_DEVICE_h3c_magic-nx30-pro=y
-          CONFIG_BATMAN_ADV_BATMAN_V=y
-          CONFIG_BATMAN_ADV_BLA=y
-          CONFIG_BATMAN_ADV_DAT=y
-          CONFIG_BATMAN_ADV_MCAST=y
-          CONFIG_PACKAGE_adbyby=y
-          CONFIG_PACKAGE_batctl-default=y
-          CONFIG_PACKAGE_cgi-io=y
-          CONFIG_PACKAGE_collectd=y
-          CONFIG_PACKAGE_collectd-mod-cpu=y
-          CONFIG_PACKAGE_collectd-mod-interface=y
-          CONFIG_PACKAGE_collectd-mod-iwinfo=y
-          CONFIG_PACKAGE_collectd-mod-load=y
-          CONFIG_PACKAGE_collectd-mod-memory=y
-          CONFIG_PACKAGE_collectd-mod-network=y
-          CONFIG_PACKAGE_collectd-mod-rrdtool=y
-          CONFIG_PACKAGE_dawn=y
-          CONFIG_PACKAGE_frpc=y
-          CONFIG_PACKAGE_iputils-arping=y
-          CONFIG_PACKAGE_jq=y
-          CONFIG_PACKAGE_kmod-batman-adv=y
-          CONFIG_PACKAGE_kmod-crypto-crc32c=y
-          CONFIG_PACKAGE_kmod-crypto-kpp=y
-          CONFIG_PACKAGE_kmod-crypto-lib-chacha20=y
-          CONFIG_PACKAGE_kmod-crypto-lib-chacha20poly1305=y
-          CONFIG_PACKAGE_kmod-crypto-lib-curve25519=y
-          CONFIG_PACKAGE_kmod-crypto-lib-poly1305=y
-          CONFIG_PACKAGE_kmod-lib-crc16=y
-          CONFIG_PACKAGE_kmod-lib-crc32c=y
-          CONFIG_PACKAGE_kmod-udptunnel4=y
-          CONFIG_PACKAGE_kmod-udptunnel6=y
-          CONFIG_PACKAGE_kmod-wireguard=y
-          CONFIG_PACKAGE_libgcrypt=y
-          CONFIG_PACKAGE_libgpg-error=y
-          CONFIG_PACKAGE_libltdl=y
-          CONFIG_PACKAGE_libminiupnpc=y
-          CONFIG_PACKAGE_libnatpmp=y
-          CONFIG_PACKAGE_librrd1=y
-          CONFIG_PACKAGE_libstdcpp=y
-          CONFIG_PACKAGE_luci-app-passwall=y
-          CONFIG_PACKAGE_luci-app-argon-config=y
-          CONFIG_PACKAGE_luci-app-design-config=y
-          CONFIG_PACKAGE_luci-app-easymesh=y
-          CONFIG_PACKAGE_luci-app-frpc=y
-          CONFIG_PACKAGE_luci-app-ntpc=y
-          CONFIG_PACKAGE_luci-app-openclash=y
-          CONFIG_PACKAGE_luci-app-pushbot=y
-          CONFIG_PACKAGE_luci-app-ramfree=y
-          CONFIG_PACKAGE_luci-app-statistics=y
-          CONFIG_PACKAGE_luci-app-wifischedule=y
-          CONFIG_PACKAGE_luci-app-wireguard=y
-          CONFIG_PACKAGE_luci-app-zerotier=y
-          CONFIG_PACKAGE_luci-compat=y
-          CONFIG_PACKAGE_luci-i18n-passwall-zh-cn=y
-          CONFIG_PACKAGE_luci-i18n-argon-config-zh-cn=y
-          CONFIG_PACKAGE_luci-i18n-design-config-zh-cn=y
-          CONFIG_PACKAGE_luci-i18n-easymesh-zh-cn=y
-          CONFIG_PACKAGE_luci-i18n-frpc-zh-cn=y
-          CONFIG_PACKAGE_luci-i18n-ntpc-zh-cn=y
-          CONFIG_PACKAGE_luci-i18n-ramfree-zh-cn=y
-          CONFIG_PACKAGE_luci-i18n-statistics-zh-cn=y
-          CONFIG_PACKAGE_luci-i18n-wireguard-zh-cn=y
-          CONFIG_PACKAGE_luci-i18n-zerotier-zh-cn=y
-          CONFIG_PACKAGE_luci-proto-wireguard=y
-          CONFIG_PACKAGE_luci-ssl-openssl=y
-          CONFIG_PACKAGE_luci-theme-argon=y
-          CONFIG_PACKAGE_luci-theme-design=y
-          CONFIG_PACKAGE_ntpclient=y
-          CONFIG_PACKAGE_rpcd-mod-rpcsys=y
-          CONFIG_PACKAGE_rrdtool1=y
-          CONFIG_PACKAGE_umdns=y
-          CONFIG_PACKAGE_wifischedule=y
-          CONFIG_PACKAGE_wireguard-tools=y
-          CONFIG_PACKAGE_zerotier=y          
-          EOF
+    - name: Load custom configuration
+      run: |
+        [ -e files ] && mv files openwrt/files
+        [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
+        chmod +x $DIY_P2_SH
+        cd openwrt
+        $GITHUB_WORKSPACE/$DIY_P2_SH
 
-          #
-          # ===============================================================
-          # 
+    - name: SSH connection to Actions
+      uses: P3TERX/ssh2actions@v1.0.0
+      if: (github.event.inputs.ssh == 'true' && github.event.inputs.ssh  != 'false') || contains(github.event.action, 'ssh')
+      env:
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
 
-          sed -i 's/^[ \t]*//g' ./.config
-          make defconfig
+    - name: Download package
+      id: package
+      run: |
+        cd openwrt
+        make defconfig
+        make download -j8
+        find dl -size -1024c -exec ls -l {} \;
+        find dl -size -1024c -exec rm -f {} \;
 
-      - name: Make download
-        run: |
-          make download -j8 || make download -j1 V=s
-          rm -rf $(find ./dl/ -size -1024c)
-          df -h
+    - name: Compile the firmware
+      id: compile
+      run: |
+        cd openwrt
+        echo -e "$(nproc) thread compile"
+        make -j$(nproc) || make -j1 || make -j1 V=s
+        echo "::set-output name=status::success"
+        grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
+        [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
+        echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
 
-      - name: Compile firmware
-        run: |
-          make -j$(nproc) || make -j1 V=s
-          echo "======================="
-          echo "Space usage:"
-          echo "======================="
-          df -h
-          echo "======================="
-          du -h ./ --max-depth=1
-          du -h /mnt/openwrt/ --max-depth=1 || true
+    - name: Check space usage
+      if: (!cancelled())
+      run: df -hT
 
-      - name: Prepare artifact
-        run: |
-          mkdir -p ./artifact/firmware
-          mkdir -p ./artifact/package
-          mkdir -p ./artifact/buildinfo
-          rm -rf $(find ./bin/targets/ -type d -name "packages")
-          cp -rf $(find ./bin/targets/ -type f) ./artifact/firmware/
-          cp -rf $(find ./bin/packages/ -type f -name "*.ipk") ./artifact/package/
-          cp -rf $(find ./bin/targets/ -type f -name "*.buildinfo" -o -name "*.manifest") ./artifact/buildinfo/
+    - name: Upload bin directory
+      uses: actions/upload-artifact@main
+      if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
+      with:
+        name: OpenWrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+        path: openwrt/bin
 
-      - name: Deliver buildinfo
-        uses: actions/upload-artifact@v4
-        with:
-          name: OpenWrt_buildinfo
-          path: ./artifact/buildinfo/
+    - name: Organize files
+      id: organize
+      if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
+      run: |
+        cd openwrt/bin/targets/*/*
+        rm -rf packages
+        echo "FIRMWARE=$PWD" >> $GITHUB_ENV
+        echo "::set-output name=status::success"
 
-      - name: Deliver package
-        uses: actions/upload-artifact@v4
-        with:
-          name: OpenWrt_package
-          path: ./artifact/package/
+    - name: Upload firmware directory
+      uses: actions/upload-artifact@main
+      if: steps.organize.outputs.status == 'success' && !cancelled()
+      with:
+        name: OpenWrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+        path: ${{ env.FIRMWARE }}
 
-      - name: Deliver firmware
-        uses: actions/upload-artifact@v4
-        with:
-          name: OpenWrt_firmware
-          path: ./bin/targets/
+    - name: Upload firmware to cowtransfer
+      id: cowtransfer
+      if: steps.organize.outputs.status == 'success' && env.UPLOAD_COWTRANSFER == 'true' && !cancelled()
+      run: |
+        curl -fsSL git.io/file-transfer | sh
+        ./transfer cow --block 2621440 -s -p 64 --no-progress ${FIRMWARE} 2>&1 | tee cowtransfer.log
+        echo "::warning file=cowtransfer.com::$(cat cowtransfer.log | grep https)"
+        echo "::set-output name=url::$(cat cowtransfer.log | grep https | cut -f3 -d" ")"
 
-      - name: Upload release asset
-        if: github.event == 'release'
-        uses: softprops/action-gh-release@v1
-        with:
-          files: ./artifact/firmware/*
-          token: ${{ secrets.YOURTOKEN }}
-          tag_name: ${{ github.ref }}
-          body: "本 Release 由 Action 自动发布，更新内容见 [History](https://github.com/Zachery-Liu/Lede-for-H3C-NX30pro/commits/master) 或上游库。 <br> Released by action bot,check [History](https://github.com/Zachery-Liu/Lede-for-H3C-NX30pro/commits/master) or upstream repo for more info." 
-          file_glob: true
+    - name: Upload firmware to WeTransfer
+      id: wetransfer
+      if: steps.organize.outputs.status == 'success' && env.UPLOAD_WETRANSFER == 'true' && !cancelled()
+      run: |
+        curl -fsSL git.io/file-transfer | sh
+        ./transfer wet -s -p 16 --no-progress ${FIRMWARE} 2>&1 | tee wetransfer.log
+        echo "::warning file=wetransfer.com::$(cat wetransfer.log | grep https)"
+        echo "::set-output name=url::$(cat wetransfer.log | grep https | cut -f3 -d" ")"
+
+    - name: Generate release tag
+      id: tag
+      if: env.UPLOAD_RELEASE == 'true' && !cancelled()
+      run: |
+        echo "::set-output name=release_tag::$(date +"%Y.%m.%d-%H%M")"
+        touch release.txt
+        [ $UPLOAD_COWTRANSFER = true ] && echo "🔗 [Cowtransfer](${{ steps.cowtransfer.outputs.url }})" >> release.txt
+        [ $UPLOAD_WETRANSFER = true ] && echo "🔗 [WeTransfer](${{ steps.wetransfer.outputs.url }})" >> release.txt
+        echo "::set-output name=status::success"
+
+    - name: Upload firmware to release
+      uses: softprops/action-gh-release@v1
+      if: steps.tag.outputs.status == 'success' && !cancelled()
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ steps.tag.outputs.release_tag }}
+        body_path: release.txt
+        files: ${{ env.FIRMWARE }}/*
+
+    - name: Delete workflow runs
+      uses: GitRML/delete-workflow-runs@main
+      with:
+        retain_days: 1
+        keep_minimum_runs: 3
+
+    - name: Remove old Releases
+      uses: dev-drprasad/delete-older-releases@v0.1.0
+      if: env.UPLOAD_RELEASE == 'true' && !cancelled()
+      with:
+        keep_latest: 3
+        delete_tags: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
