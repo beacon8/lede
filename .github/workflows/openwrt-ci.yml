@@ -29,10 +29,6 @@ jobs:
     if: github.event.repository.owner.id == github.event.sender.id
 
     steps:
-    
-      - name: Set env
-        run: echo "NOW=v$(date +'%Y%m%d.%H%M%S')" >> "$GITHUB_ENV"
-
       - name: Checkout
         uses: actions/checkout@v3
         with:
